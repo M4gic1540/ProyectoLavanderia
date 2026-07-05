@@ -44,21 +44,25 @@ pipeline {
                         }
                 }
 
-                stage('Setup Python env') {
-                        steps {
-                                sh '''
-                                        set -e
-                                        python3 -m venv "$VENV_DIR"
-                                        . "$VENV_DIR/bin/activate"
-                                        pip install --upgrade pip
-                                    pip install --no-cache-dir -r requirements.txt \
-                                      ruff==0.8.4 \
-                                      bandit==1.8.0 \
-                                      pip-audit==2.7.3 \
-                                      coverage==7.6.9
-                                '''
-                        }
-                }
+    stage('Setup Python env') {
+        steps {
+            sh '''
+                set -e
+                python3 -m venv "$VENV_DIR"
+                . "$VENV_DIR/bin/activate"
+                pip install --upgrade pip
+                
+                # Forzar la instalación del adaptador binario de Postgres antes del requirements
+                pip install psycopg2-binary==2.9.9 
+                
+                pip install --no-cache-dir -r requirements.txt \
+                  ruff==0.8.4 \
+                  bandit==1.8.0 \
+                  pip-audit==2.7.3 \
+                  coverage==7.6.9
+            '''
+        }
+    }
 
         stage('Lint (ruff)') {
             steps {
