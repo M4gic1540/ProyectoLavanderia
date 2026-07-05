@@ -122,18 +122,15 @@ pipeline {
 
         stage('Docker push') {
             when {
-                branch 'main'
+                expression {
+                    return env.HAS_DOCKER == 'true' && env.BRANCH_NAME == 'main'
+                }
             }
             environment {
                 DOCKERHUB_CREDS = credentials('dockerhub-creds')
             }
             steps {
                 sh '''
-                    if [ "$HAS_DOCKER" != "true" ]; then
-                      echo "Docker no disponible en el agente: se omite Docker push."
-                      exit 0
-                    fi
-
                     SHORT_SHA=$(git rev-parse --short HEAD)
 
                     echo "$DOCKERHUB_CREDS_PSW" | docker login \
