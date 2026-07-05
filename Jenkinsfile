@@ -10,8 +10,9 @@ pipeline {
         POSTGRES_DB = 'appdb_test'
         POSTGRES_USER = 'appuser'
         POSTGRES_PASSWORD = 'apppassword_ci'
-        PYTHON_IMAGE = 'python:3.12-slim'
         DOCKER_IMAGE = 'm4gic/main'
+        VENV_DIR = '.venv-ci'
+        HAS_DOCKER = 'false'
     }
 
     stages {
@@ -21,18 +22,51 @@ pipeline {
             }
         }
 
+                stage('Detect toolchain') {
+                        steps {
+                                script {
+                                        env.HAS_DOCKER = sh(
+                                                script: 'command -v docker >/dev/null 2>&1 && echo true || echo false',
+                                                returnStdout: true
+                                        ).trim()
+                                }
+                                sh '''
+                                        command -v python3 >/dev/null 2>&1 || {
+                                            echo "ERROR: python3 no esta disponible en el agente Jenkins."
+                                            exit 1
+                                        }
+                                        command -v pip3 >/dev/null 2>&1 || {
+                                            echo "ERROR: pip3 no esta disponible en el agente Jenkins."
+                                            exit 1
+                                        }
+                                        echo "HAS_DOCKER=$HAS_DOCKER"
+                                '''
+                        }
+                }
+
+                stage('Setup Python env') {
+                        steps {
+                                sh '''
+                                        set -e
+                                        python3 -m venv "$VENV_DIR"
+                                        . "$VENV_DIR/bin/activate"
+                                        pip install --upgrade pip
+                                    pip install --no-cache-dir -r requirements.txt \
+                                      ruff==0.8.4 \
+                                      bandit==1.8.0 \
+                                      pip-audit==2.7.3 \
+                                      coverage==7.6.9
+                                '''
+                        }
+                }
+
         stage('Lint (ruff)') {
             steps {
                 sh '''
-                    docker run --rm \
-                      -v "$PWD":/app \
-                      -w /app \
-                      $PYTHON_IMAGE \
-                      sh -c "
-                        pip install --no-cache-dir ruff==0.8.4 &&
-                        ruff check . &&
-                        ruff format --check .
-                      "
+                                        set -e
+                                        . "$VENV_DIR/bin/activate"
+                                        ruff check .
+                                        ruff format --check .
                 '''
             }
         }
@@ -40,15 +74,10 @@ pipeline {
         stage('Security scan') {
             steps {
                 sh '''
-                    docker run --rm \
-                      -v "$PWD":/app \
-                      -w /app \
-                      $PYTHON_IMAGE \
-                      sh -c "
-                        pip install --no-cache-dir bandit==1.8.0 pip-audit==2.7.3 &&
-                        bandit -r . -x './*/migrations,./*/__pycache__,.venv' -ll &&
-                        pip-audit -r requirements.txt
-                      "
+                    set -e
+                    . "$VENV_DIR/bin/activate"
+                    bandit -r . -x './*/migrations,./*/__pycache__,.venv,.venv-ci' -ll
+                    pip-audit -r requirements.txt
                 '''
             }
         }
@@ -57,59 +86,19 @@ pipeline {
             steps {
                 sh '''
                     set -e
-
-                    NETWORK_NAME="ci_net_$BUILD_NUMBER"
-                    POSTGRES_CONTAINER="ci_pg_$BUILD_NUMBER"
-
-                    cleanup() {
-                      docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
-                      docker network rm "$NETWORK_NAME" >/dev/null 2>&1 || true
-                    }
-
-                    trap cleanup EXIT
-
-                    docker network create "$NETWORK_NAME"
-
-                    docker run -d \
-                      --name "$POSTGRES_CONTAINER" \
-                      --network "$NETWORK_NAME" \
-                      -e POSTGRES_DB="$POSTGRES_DB" \
-                      -e POSTGRES_USER="$POSTGRES_USER" \
-                      -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-                      postgres:16
-
-                                        until docker exec "$POSTGRES_CONTAINER" pg_isready \
-                                            -U "$POSTGRES_USER" \
-                                            -d "$POSTGRES_DB"; do
-                      sleep 2
-                    done
-
-                    docker run --rm \
-                      --network "$NETWORK_NAME" \
-                      -v "$PWD":/app \
-                      -w /app \
-                      -e DB_ENGINE=postgres \
-                      -e POSTGRES_HOST="$POSTGRES_CONTAINER" \
-                      -e POSTGRES_PORT=5432 \
-                      -e POSTGRES_DB="$POSTGRES_DB" \
-                      -e POSTGRES_USER="$POSTGRES_USER" \
-                      -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-                      -e SECRET_KEY='ci-test-secret-key-not-for-production' \
-                      -e DEBUG=False \
-                      -e ALLOWED_HOSTS='localhost,127.0.0.1' \
-                      $PYTHON_IMAGE \
-                      sh -c "
-                        pip install --no-cache-dir -r requirements.txt coverage==7.6.9 &&
-                        python manage.py makemigrations --check --dry-run &&
-                        python manage.py check --deploy --fail-level WARNING &&
-                                                COVERAGE_OMIT='*/migrations/*,*/__pycache__/*,manage.py,core/asgi.py,core/wsgi.py' &&
-                                                coverage run --source='users,core' --omit="$COVERAGE_OMIT" \
-                          manage.py test &&
-                        coverage report -m --fail-under=90 &&
-                        coverage report -m --include='users/*.py,core/urls.py' \
-                          --omit='users/tests.py' --fail-under=95 &&
-                        coverage xml
-                      "
+                    . "$VENV_DIR/bin/activate"
+                    export SECRET_KEY='ci-test-secret-key-not-for-production'
+                    export DEBUG=False
+                    export ALLOWED_HOSTS='localhost,127.0.0.1'
+                    python manage.py makemigrations --check --dry-run
+                    python manage.py check --deploy --fail-level WARNING
+                                        coverage run --source='users,core' \
+                                            --omit='*/migrations/*,*/__pycache__/*,manage.py,core/asgi.py,core/wsgi.py' \
+                                            manage.py test
+                    coverage report -m --fail-under=90
+                    coverage report -m --include='users/*.py,core/urls.py' \
+                      --omit='users/tests.py' --fail-under=95
+                    coverage xml
                 '''
             }
             post {
@@ -120,6 +109,9 @@ pipeline {
         }
 
         stage('Docker build (validacion)') {
+            when {
+                expression { env.HAS_DOCKER == 'true' }
+            }
             steps {
                 sh 'docker build -t proyecto-django:ci-$BUILD_NUMBER .'
             }
@@ -138,6 +130,11 @@ pipeline {
                     )
                 ]) {
                     sh '''
+                                                if [ "$HAS_DOCKER" != "true" ]; then
+                                                    echo "Docker no disponible en el agente: se omite Docker push."
+                                                    exit 0
+                                                fi
+
                         SHORT_SHA=$(git rev-parse --short HEAD)
 
                         echo "$DOCKERHUB_TOKEN" | docker login \
@@ -150,6 +147,15 @@ pipeline {
                         docker push $DOCKER_IMAGE:$SHORT_SHA
                     '''
                 }
+            }
+        }
+
+        stage('Docker unavailable notice') {
+            when {
+                expression { env.HAS_DOCKER != 'true' }
+            }
+            steps {
+                echo 'Docker no disponible en el agente: se omitieron Docker build/push.'
             }
         }
     }
