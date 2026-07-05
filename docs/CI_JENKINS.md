@@ -4,12 +4,13 @@
 
 - Servicio `jenkins` en `docker-compose.yml` para arrancar junto a `db` y `web`.
 - Imagen personalizada de Jenkins en `jenkins/Dockerfile` con Docker CLI.
-- `Jenkinsfile` con etapas equivalentes a tu pipeline previo:
-  - Lint (`ruff`)
-  - Security (`bandit` y `pip-audit`)
-  - Tests + coverage con PostgreSQL efimero
-  - Docker build
-  - Docker push en `main`
+- `Jenkinsfile` con etapas de CI:
+  - Detecta herramientas disponibles en el agente (`python3`, `pip3`, `docker`).
+  - Crea un entorno virtual local (`.venv-ci`) para ejecutar lint, seguridad y tests.
+  - Lint (`ruff`).
+  - Security (`bandit` y `pip-audit`).
+  - Tests + coverage (por defecto sobre SQLite en CI).
+  - Docker build y Docker push en `main` solo si Docker esta disponible.
 
 ## Arranque de la plataforma
 
@@ -46,5 +47,6 @@ Para la etapa de push a Docker Hub, crear en Jenkins:
 
 ## Notas operativas
 
-- El push solo corre en rama `main` y en builds que no son PR.
-- Jenkins usa el socket Docker del host (`/var/run/docker.sock`) para ejecutar builds y contenedores efimeros de CI.
+- Si el agente no tiene Docker, el pipeline no falla por ello: solo omite `Docker build`/`Docker push`.
+- Para ejecutar build/push de imagenes, el agente debe tener binario `docker` y acceso al daemon.
+- El push solo corre en rama `main`.
