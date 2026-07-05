@@ -42,7 +42,7 @@ pipeline {
                         echo "ERROR: pip3 no esta disponible en el agente Jenkins."
                         exit 1
                     }
-                    echo "Herramientas detectadas -> HAS_DOCKER: ${env.HAS_DOCKER}"
+                    echo "Herramientas detectadas -> HAS_DOCKER: $HAS_DOCKER"
                 '''
             }
         }
@@ -122,32 +122,29 @@ pipeline {
 
         stage('Docker push') {
             when {
-                all {
-                    branch 'main'
-                    expression { return env.HAS_DOCKER == 'true' }
-                }
+                branch 'main'
+            }
+            environment {
+                DOCKERHUB_CREDS = credentials('dockerhub-creds')
             }
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKERHUB_USERNAME',
-                        passwordVariable: 'DOCKERHUB_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        SHORT_SHA=$(git rev-parse --short HEAD)
+                sh '''
+                    if [ "$HAS_DOCKER" != "true" ]; then
+                      echo "Docker no disponible en el agente: se omite Docker push."
+                      exit 0
+                    fi
 
-                        echo "$DOCKERHUB_TOKEN" | docker login \
-                          -u "$DOCKERHUB_USERNAME" --password-stdin
+                    SHORT_SHA=$(git rev-parse --short HEAD)
 
-                        docker tag proyecto-django:ci-$BUILD_NUMBER $DOCKER_IMAGE:latest
-                        docker tag proyecto-django:ci-$BUILD_NUMBER $DOCKER_IMAGE:$SHORT_SHA
+                    echo "$DOCKERHUB_CREDS_PSW" | docker login \
+                      -u "$DOCKERHUB_CREDS_USR" --password-stdin
 
-                        docker push $DOCKER_IMAGE:latest
-                        docker push $DOCKER_IMAGE:$SHORT_SHA
-                    '''
-                }
+                    docker tag proyecto-django:ci-$BUILD_NUMBER $DOCKER_IMAGE:latest
+                    docker tag proyecto-django:ci-$BUILD_NUMBER $DOCKER_IMAGE:$SHORT_SHA
+
+                    docker push $DOCKER_IMAGE:latest
+                    docker push $DOCKER_IMAGE:$SHORT_SHA
+                '''
             }
         }
 

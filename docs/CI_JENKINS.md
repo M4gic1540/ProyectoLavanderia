@@ -20,6 +20,13 @@ Desde la raiz del proyecto:
 docker compose up -d --build
 ```
 
+Si ya tenias Jenkins levantado y cambiaste `jenkins/Dockerfile`, reconstruye forzando la imagen:
+
+```bash
+docker compose build --no-cache jenkins
+docker compose up -d --force-recreate jenkins
+```
+
 Servicios esperados:
 
 - Django: `http://localhost:8000`
